@@ -1,0 +1,2 @@
+
+a = 10;b = 2;c = 3;result = (a + b) * c - 5; print(result);

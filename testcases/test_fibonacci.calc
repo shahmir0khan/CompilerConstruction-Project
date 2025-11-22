@@ -1,0 +1,1 @@
+a=0;b=1;n=10;c=0;while(c<n){print(a);t=a+b;a=b;b=t;c=c+1;}

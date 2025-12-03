@@ -1,8 +1,40 @@
 import re
 import sys
+def print_tree(node, indent="", is_last=True):
+    """Recursively print the AST as a parse tree."""
+    if node is None:
+        print(indent + ("└── " if is_last else "├── ") + "None")
+        return
+
+    # Node label
+    label = node.__class__.__name__
+    print(indent + ("└── " if is_last else "├── ") + label)
+
+    # Prepare indentation for children
+    new_indent = indent + ("    " if is_last else "│   ")
+
+    # Node children = attributes inside __dict__
+    items = list(node.__dict__.items())
+    for idx, (name, value) in enumerate(items):
+        last = idx == len(items) - 1
+
+        # Print primitive
+        if isinstance(value, (int, float, str, bool)):
+            print(new_indent + ("└── " if last else "├── ") + f"{name}: {value}")
+        # Print list of nodes
+        elif isinstance(value, list):
+            print(new_indent + ("└── " if last else "├── ") + name)
+            sub_indent = new_indent + ("    " if last else "│   ")
+            for i, elem in enumerate(value):
+                print_tree(elem, sub_indent, i == len(value) - 1)
+        # Another AST node
+        elif hasattr(value, "__dict__"):
+            print_tree(value, new_indent, last)
+        else:
+            print(new_indent + ("└── " if last else "├── ") + f"{name}: {value}")
 
 # ============================================================================
-# LEXER - Tokenizes input source code
+# PHASE 1: LEXER - Tokenizes input source code
 # ============================================================================
 
 TOKEN_SPEC = [
@@ -52,15 +84,15 @@ class Token:
         return f"Token({self.type}, {self.value!r}, {self.line}:{self.col})"
 
 def lex(code):
-    """Tokenize the input code."""
+    # Combine ALL token regex into a single pattern that matches in TOKEN_SPEC
     token_pattern = '|'.join(f'(?P<{name}>{pattern})' for name, pattern in TOKEN_SPEC)
     line_num = 1
     line_start = 0
     tokens = []
-    
+    #match tokens with code
     for match in re.finditer(token_pattern, code):
-        kind = match.lastgroup
-        value = match.group()
+        kind = match.lastgroup          # The token type
+        value = match.group()           # The actual text matched by the regex.
         column = match.start() - line_start
         
         if kind == 'NUMBER':
@@ -81,12 +113,12 @@ def lex(code):
     return tokens
 
 # ============================================================================
-# AST NODES - Abstract Syntax Tree representation
+# PHASE 2: AST NODES - Abstract Syntax Tree representation
 # ============================================================================
 
 class ASTNode:
     pass
-
+# inside each class , there are their children nodes
 class Program(ASTNode):
     def __init__(self, statements):
         self.statements = statements
@@ -151,8 +183,10 @@ class Parser:
     def current_token(self):
         return self.tokens[self.pos]
     
+    # This ensures the syntax is correct.
     def consume(self, expected_type=None):
         token = self.current_token()
+        # if expected a specific token but got something else → syntax error
         if expected_type and token.type != expected_type:
             raise SyntaxError(f"Expected {expected_type}, got {token.type} at line {token.line}")
         self.pos += 1
@@ -236,7 +270,7 @@ class Parser:
         self.consume('STEP')
         step = self.parse_expression()
         self.consume('SEMI')
-        
+        #AST construct here
         # Transform into: var = start; while(var <= end) { print(var); var = var + step; }
         init = Assignment(var_name, start)
         condition = BinaryOp('LE', Variable(var_name), end)
@@ -247,6 +281,7 @@ class Parser:
         
         return Block([init, loop])
     
+    #its for list/array
     def parse_sequence(self):
         """Parse: sequence name = expr1, expr2, ...;"""
         self.consume('SEQUENCE')
@@ -259,7 +294,7 @@ class Parser:
             values.append(self.parse_expression())
         self.consume('SEMI')
         return SequenceStmt(name, values)
-    
+      #for multiple statements in a code , each statemnet is child of block
     def parse_block(self):
         """Parse: { statement* }"""
         self.consume('LBRACE')
@@ -335,9 +370,13 @@ class Parser:
             raise SyntaxError(f"Unexpected token {token.type} at line {token.line}")
 
 # ============================================================================
-# SEMANTIC ANALYZER - Type checking and symbol table
+# PHASE 3: SEMANTIC ANALYZER - Type checking and symbol table
 # ============================================================================
-
+""" only checks for semantic errors:
+        Variable Declaration (when assigned)
+        Variable Usage — Checking if variable exists
+        EXPRESSION CHECKING
+        CONTROL STRUCTURE VALIDATION"""
 class SemanticAnalyzer:
     def __init__(self):
         self.symbol_table = {}
@@ -345,8 +384,8 @@ class SemanticAnalyzer:
     
     def analyze(self, node):
         """Analyze the AST."""
-        method_name = f'analyze_{node.__class__.__name__}'
-        method = getattr(self, method_name, self.generic_analyze)
+        method_name = f'analyze_{node.__class__.__name__}'#if node isAssignment → method_name = "analyze_Assignment"
+        method = getattr(self, method_name, self.generic_analyze)# get the method from the class
         return method(node)
     
     def generic_analyze(self, node):
@@ -361,6 +400,7 @@ class SemanticAnalyzer:
             self.analyze(stmt)
     
     def analyze_Assignment(self, node):
+        #self.symbol_table["x"] = "int"
         self.analyze(node.expression)
         self.symbol_table[node.variable] = 'int'
     
@@ -391,13 +431,14 @@ class SemanticAnalyzer:
     
     def analyze_Number(self, node):
         pass
-    
+
+    #Checking if variable exists in symbol table  (declared before use)
     def analyze_Variable(self, node):
         if node.name not in self.symbol_table:
             self.errors.append(f"Variable '{node.name}' used before assignment")
 
 # ============================================================================
-# CODE GENERATOR - Generates Three-Address Code (TAC)
+# PHASE 4:CODE GENERATOR - Generates Three-Address Code (TAC)
 # ============================================================================
 
 class CodeGenerator:
@@ -433,6 +474,7 @@ class CodeGenerator:
             self.generate(stmt)
         return self.code
     
+  
     def generate_Block(self, node):
         for stmt in node.statements:
             self.generate(stmt)
@@ -468,12 +510,13 @@ class CodeGenerator:
         self.generate(node.body)
         self.emit('goto', None, None, start_label)
         self.emit('label', None, None, end_label)
-    
+  
     def generate_SequenceStmt(self, node):
         for expr in node.values:
             result = self.generate(expr)
             self.emit('print', result, None, None)
-    
+            
+    #t2 = t0 + t1
     def generate_BinaryOp(self, node):
         left_result = self.generate(node.left)
         right_result = self.generate(node.right)
@@ -494,6 +537,7 @@ class CodeGenerator:
         self.emit('neg', operand_result, None, result)
         return result
     
+    #t0 = 5
     def generate_Number(self, node):
         result = self.new_temp()
         self.emit('const', node.value, None, result)
@@ -511,13 +555,19 @@ class Optimizer:
         self.code = code
     
     def constant_folding(self):
-        """Perform constant folding optimization."""
+        """Perform constant folding optimization.
+        t1 = 2
+        t2 = 3
+        t3 = t1 + t2
+        print t3
+        output = t3= 2+3;
+"""
         constants = {}
         optimized = []
         
         for op, arg1, arg2, result in self.code:
             if op == 'const':
-                constants[result] = arg1
+                constants[result] = arg1# SAVE CONSTANt VALUE so directly use when operator come
                 optimized.append((op, arg1, arg2, result))
             elif op in ('+', '-', '*', '/'):
                 val1 = constants.get(arg1)
@@ -684,7 +734,7 @@ def compile_and_run(source_code, show_phases=False, optimize=True):
         ast = parser.parse()
         if show_phases:
             print("  AST built successfully")
-            print()
+            print_tree(ast)
         
         # Phase 3: Semantic Analysis
         if show_phases:
